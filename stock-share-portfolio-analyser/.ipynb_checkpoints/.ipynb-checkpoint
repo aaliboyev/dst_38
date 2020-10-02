@@ -1,0 +1,284 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Stock share portfolio analyser 1.0"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "This script helps me to analyse my stock share portfolio. I always needed to automate this process. Before I used to download all data from the stock markets website. And build the calculator every time when I update my portfolio (buy or sell any stock). But today I don't need the whole process anymore. just download the data and upload it here. Script automaticly does all the calculation, loads actual prices for all shares and returns a result."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "One more thing I wanted to do is to build program that will not jost analyse my portfolio, but itself get all the data of stock prices, analyse and give a prediction of future prices. Yes it will require a lot more time, knowledge, experience and strategies (machine learning, deep learning and other technologies). But I think this will be the first version of that programm."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "#### import necessary python modules"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import collections\n",
+    "import requests\n",
+    "from bs4 import BeautifulSoup as BS\n",
+    "import re\n",
+    "\n",
+    "# load the portfolio\n",
+    "data = open('portfolio.20-09-20.csv')\n",
+    "\n",
+    "def preprocess_data(data):\n",
+    "    floatptn = re.compile('\\d*,?\\d+\\.\\d+') # pattern to match float numbers like '23,1123.00'\n",
+    "    intptn = re.compile('^\\d+,?\\d+$') # pattern to match integers like '132,123,000'\n",
+    "    keys = []\n",
+    "    i = 0\n",
+    "    lines = []\n",
+    "    for line in data: # loop through the lines of data. one line contains data of one trade\n",
+    "        line = line.split(';')  # split columns\n",
+    "        if i > 0: # if line does not contain column names\n",
+    "            el = {}\n",
+    "            for c in range(len(line)): # loop through columns and match integer and float patterns\n",
+    "                if intptn.search(line[c]) != None:\n",
+    "                    val = int(line[c].replace(',', ''))\n",
+    "                elif floatptn.search(line[c]) != None:\n",
+    "                    val = float(line[c].replace(',', ''))\n",
+    "                else:\n",
+    "                    val = line[c]\n",
+    "                el[keys[c]] = val\n",
+    "            lines.append(el)\n",
+    "        else:\n",
+    "            keys = line # include column names here\n",
+    "            i+=1\n",
+    "    return lines # return preprocessed list of trades\n",
+    "\n",
+    "# get acutal prices for single share\n",
+    "def get_prices(share): \n",
+    "    share_url = 'https://uzse.uz/isu_infos/STK?isu_cd='\n",
+    "    compiler = re.compile('\\d+\\s?,?\\d*')\n",
+    "    print('Getting prices for', share['company'])\n",
+    "    r = requests.get(share_url+share['code'])\n",
+    "    cnt = BS(r.content, 'html.parser')\n",
+    "    prices = []\n",
+    "    for el in cnt.select('.conclusion-table .text-right'):\n",
+    "        price = el.select('.trd-price.price-up')\n",
+    "        if compiler.search(el.text) != None:\n",
+    "            index = compiler.search(el.text).span()\n",
+    "            price = float(el.text[index[0]:index[1]].replace(',', '.').replace(' ', ''))\n",
+    "            prices.append(price)\n",
+    "        else:\n",
+    "            prices.append(0)\n",
+    "    return {'nominal': prices[0], 'base': prices[1], 'current': prices[2]}\n",
+    "\n",
+    "# convert preprocessed data into actives list adding accumulating shares \n",
+    "# if their company (Issue Code) is the same\n",
+    "def process_data(sort):\n",
+    "    actives = {}\n",
+    "    for trade in sort:\n",
+    "        active = {'Company': '', 'Quantity': 0, 'Total profit': 0, 'Total spent': 0, 'Base price': 0, 'Current price': 0, 'Price change': 0, 'Profit change': 0, 'Fee': 0, 'Trades': 0}\n",
+    "        if trade['Issue Code'] in actives:\n",
+    "            active = actives[trade['Issue Code']]\n",
+    "        active['Company'] = trade['Issue Name']\n",
+    "        active['Trades'] += 1\n",
+    "        active['Quantity'] += trade['Executed Quantity']\n",
+    "        active['Base price'] += trade['Execution Price']\n",
+    "        active['Total spent'] += trade['Trading Amount']\n",
+    "        active['Fee'] += trade['Fee']\n",
+    "        actives[trade['Issue Code']] = active\n",
+    "\n",
+    "    for i in actives:\n",
+    "        share = actives[i]\n",
+    "        current = get_prices({'code': i, 'company': share['Company']})\n",
+    "        price = current['current']\n",
+    "        share['Current price'] = price\n",
+    "        share['Base price'] = price / share['Trades']\n",
+    "        share['Price change'] = price - share['Base price']\n",
+    "        share['Total profit'] = price * share['Quantity']\n",
+    "        share['Profit change'] = share['Total profit'] - share['Total spent']\n",
+    "    return actives\n",
+    "\n",
+    "# print human readable rows\n",
+    "def e(str1, str2='', length=40):\n",
+    "    print(str1.ljust(length, ' '), str2)\n",
+    "\n",
+    "# print human readable numbers like 123 000 000.00\n",
+    "def n(num, pad=20, dec=2, thousands=' ', decimal='.'):\n",
+    "    return (\"{0:\"+str(pad)+\",.\"+str(dec)+\"f}\").format(num).replace(',', thousands).replace('.', decimal)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Calculate the overall data"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Getting prices for O'zsanoatqurilishbank ATB\n"
+     ]
+    },
+    {
+     "ename": "ConnectionError",
+     "evalue": "HTTPSConnectionPool(host='uzse.uz', port=443): Max retries exceeded with url: /isu_infos/STK?isu_cd=UZ7037560008 (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x000001F3F6CBE340>: Failed to establish a new connection: [WinError 10060] Попытка установить соединение была безуспешной, т.к. от другого компьютера за требуемое время не получен нужный отклик, или было разорвано уже установленное соединение из-за неверного отклика уже подключенного компьютера'))",
+     "output_type": "error",
+     "traceback": [
+      "\u001b[1;31m---------------------------------------------------------------------------\u001b[0m",
+      "\u001b[1;31mTimeoutError\u001b[0m                              Traceback (most recent call last)",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\urllib3\\connection.py\u001b[0m in \u001b[0;36m_new_conn\u001b[1;34m(self)\u001b[0m\n\u001b[0;32m    158\u001b[0m         \u001b[1;32mtry\u001b[0m\u001b[1;33m:\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m--> 159\u001b[1;33m             conn = connection.create_connection(\n\u001b[0m\u001b[0;32m    160\u001b[0m                 \u001b[1;33m(\u001b[0m\u001b[0mself\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0m_dns_host\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0mself\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mport\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0mself\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mtimeout\u001b[0m\u001b[1;33m,\u001b[0m \u001b[1;33m**\u001b[0m\u001b[0mextra_kw\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\urllib3\\util\\connection.py\u001b[0m in \u001b[0;36mcreate_connection\u001b[1;34m(address, timeout, source_address, socket_options)\u001b[0m\n\u001b[0;32m     83\u001b[0m     \u001b[1;32mif\u001b[0m \u001b[0merr\u001b[0m \u001b[1;32mis\u001b[0m \u001b[1;32mnot\u001b[0m \u001b[1;32mNone\u001b[0m\u001b[1;33m:\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m---> 84\u001b[1;33m         \u001b[1;32mraise\u001b[0m \u001b[0merr\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m     85\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\urllib3\\util\\connection.py\u001b[0m in \u001b[0;36mcreate_connection\u001b[1;34m(address, timeout, source_address, socket_options)\u001b[0m\n\u001b[0;32m     73\u001b[0m                 \u001b[0msock\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mbind\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0msource_address\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m---> 74\u001b[1;33m             \u001b[0msock\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mconnect\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0msa\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m     75\u001b[0m             \u001b[1;32mreturn\u001b[0m \u001b[0msock\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;31mTimeoutError\u001b[0m: [WinError 10060] Попытка установить соединение была безуспешной, т.к. от другого компьютера за требуемое время не получен нужный отклик, или было разорвано уже установленное соединение из-за неверного отклика уже подключенного компьютера",
+      "\nDuring handling of the above exception, another exception occurred:\n",
+      "\u001b[1;31mNewConnectionError\u001b[0m                        Traceback (most recent call last)",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\urllib3\\connectionpool.py\u001b[0m in \u001b[0;36murlopen\u001b[1;34m(self, method, url, body, headers, retries, redirect, assert_same_host, timeout, pool_timeout, release_conn, chunked, body_pos, **response_kw)\u001b[0m\n\u001b[0;32m    669\u001b[0m             \u001b[1;31m# Make the request on the httplib connection object.\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m--> 670\u001b[1;33m             httplib_response = self._make_request(\n\u001b[0m\u001b[0;32m    671\u001b[0m                 \u001b[0mconn\u001b[0m\u001b[1;33m,\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\urllib3\\connectionpool.py\u001b[0m in \u001b[0;36m_make_request\u001b[1;34m(self, conn, method, url, timeout, chunked, **httplib_request_kw)\u001b[0m\n\u001b[0;32m    380\u001b[0m         \u001b[1;32mtry\u001b[0m\u001b[1;33m:\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m--> 381\u001b[1;33m             \u001b[0mself\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0m_validate_conn\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mconn\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m    382\u001b[0m         \u001b[1;32mexcept\u001b[0m \u001b[1;33m(\u001b[0m\u001b[0mSocketTimeout\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0mBaseSSLError\u001b[0m\u001b[1;33m)\u001b[0m \u001b[1;32mas\u001b[0m \u001b[0me\u001b[0m\u001b[1;33m:\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\urllib3\\connectionpool.py\u001b[0m in \u001b[0;36m_validate_conn\u001b[1;34m(self, conn)\u001b[0m\n\u001b[0;32m    975\u001b[0m         \u001b[1;32mif\u001b[0m \u001b[1;32mnot\u001b[0m \u001b[0mgetattr\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mconn\u001b[0m\u001b[1;33m,\u001b[0m \u001b[1;34m\"sock\"\u001b[0m\u001b[1;33m,\u001b[0m \u001b[1;32mNone\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m:\u001b[0m  \u001b[1;31m# AppEngine might not have  `.sock`\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m--> 976\u001b[1;33m             \u001b[0mconn\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mconnect\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m    977\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\urllib3\\connection.py\u001b[0m in \u001b[0;36mconnect\u001b[1;34m(self)\u001b[0m\n\u001b[0;32m    307\u001b[0m         \u001b[1;31m# Add certificate verification\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m--> 308\u001b[1;33m         \u001b[0mconn\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0mself\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0m_new_conn\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m    309\u001b[0m         \u001b[0mhostname\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0mself\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mhost\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\urllib3\\connection.py\u001b[0m in \u001b[0;36m_new_conn\u001b[1;34m(self)\u001b[0m\n\u001b[0;32m    170\u001b[0m         \u001b[1;32mexcept\u001b[0m \u001b[0mSocketError\u001b[0m \u001b[1;32mas\u001b[0m \u001b[0me\u001b[0m\u001b[1;33m:\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m--> 171\u001b[1;33m             raise NewConnectionError(\n\u001b[0m\u001b[0;32m    172\u001b[0m                 \u001b[0mself\u001b[0m\u001b[1;33m,\u001b[0m \u001b[1;34m\"Failed to establish a new connection: %s\"\u001b[0m \u001b[1;33m%\u001b[0m \u001b[0me\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;31mNewConnectionError\u001b[0m: <urllib3.connection.HTTPSConnection object at 0x000001F3F6CBE340>: Failed to establish a new connection: [WinError 10060] Попытка установить соединение была безуспешной, т.к. от другого компьютера за требуемое время не получен нужный отклик, или было разорвано уже установленное соединение из-за неверного отклика уже подключенного компьютера",
+      "\nDuring handling of the above exception, another exception occurred:\n",
+      "\u001b[1;31mMaxRetryError\u001b[0m                             Traceback (most recent call last)",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\requests\\adapters.py\u001b[0m in \u001b[0;36msend\u001b[1;34m(self, request, stream, timeout, verify, cert, proxies)\u001b[0m\n\u001b[0;32m    438\u001b[0m             \u001b[1;32mif\u001b[0m \u001b[1;32mnot\u001b[0m \u001b[0mchunked\u001b[0m\u001b[1;33m:\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m--> 439\u001b[1;33m                 resp = conn.urlopen(\n\u001b[0m\u001b[0;32m    440\u001b[0m                     \u001b[0mmethod\u001b[0m\u001b[1;33m=\u001b[0m\u001b[0mrequest\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mmethod\u001b[0m\u001b[1;33m,\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\urllib3\\connectionpool.py\u001b[0m in \u001b[0;36murlopen\u001b[1;34m(self, method, url, body, headers, retries, redirect, assert_same_host, timeout, pool_timeout, release_conn, chunked, body_pos, **response_kw)\u001b[0m\n\u001b[0;32m    723\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m--> 724\u001b[1;33m             retries = retries.increment(\n\u001b[0m\u001b[0;32m    725\u001b[0m                 \u001b[0mmethod\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0murl\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0merror\u001b[0m\u001b[1;33m=\u001b[0m\u001b[0me\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0m_pool\u001b[0m\u001b[1;33m=\u001b[0m\u001b[0mself\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0m_stacktrace\u001b[0m\u001b[1;33m=\u001b[0m\u001b[0msys\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mexc_info\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m[\u001b[0m\u001b[1;36m2\u001b[0m\u001b[1;33m]\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\urllib3\\util\\retry.py\u001b[0m in \u001b[0;36mincrement\u001b[1;34m(self, method, url, response, error, _pool, _stacktrace)\u001b[0m\n\u001b[0;32m    438\u001b[0m         \u001b[1;32mif\u001b[0m \u001b[0mnew_retry\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mis_exhausted\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m:\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m--> 439\u001b[1;33m             \u001b[1;32mraise\u001b[0m \u001b[0mMaxRetryError\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0m_pool\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0murl\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0merror\u001b[0m \u001b[1;32mor\u001b[0m \u001b[0mResponseError\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mcause\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m    440\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;31mMaxRetryError\u001b[0m: HTTPSConnectionPool(host='uzse.uz', port=443): Max retries exceeded with url: /isu_infos/STK?isu_cd=UZ7037560008 (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x000001F3F6CBE340>: Failed to establish a new connection: [WinError 10060] Попытка установить соединение была безуспешной, т.к. от другого компьютера за требуемое время не получен нужный отклик, или было разорвано уже установленное соединение из-за неверного отклика уже подключенного компьютера'))",
+      "\nDuring handling of the above exception, another exception occurred:\n",
+      "\u001b[1;31mConnectionError\u001b[0m                           Traceback (most recent call last)",
+      "\u001b[1;32m<ipython-input-8-4e09ae143daf>\u001b[0m in \u001b[0;36m<module>\u001b[1;34m\u001b[0m\n\u001b[0;32m      1\u001b[0m \u001b[0msort\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0mpreprocess_data\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mdata\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m----> 2\u001b[1;33m \u001b[0mactives\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0mprocess_data\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0msort\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m      3\u001b[0m \u001b[0mcurrentIndex\u001b[0m \u001b[1;33m=\u001b[0m \u001b[1;36m0\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m      4\u001b[0m \u001b[0mbaseIndex\u001b[0m \u001b[1;33m=\u001b[0m \u001b[1;36m0\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m      5\u001b[0m \u001b[0mtotalProfit\u001b[0m \u001b[1;33m=\u001b[0m \u001b[1;36m0\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m<ipython-input-7-98e319f29352>\u001b[0m in \u001b[0;36mprocess_data\u001b[1;34m(sort)\u001b[0m\n\u001b[0;32m     67\u001b[0m     \u001b[1;32mfor\u001b[0m \u001b[0mi\u001b[0m \u001b[1;32min\u001b[0m \u001b[0mactives\u001b[0m\u001b[1;33m:\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m     68\u001b[0m         \u001b[0mshare\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0mactives\u001b[0m\u001b[1;33m[\u001b[0m\u001b[0mi\u001b[0m\u001b[1;33m]\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m---> 69\u001b[1;33m         \u001b[0mcurrent\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0mget_prices\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;33m{\u001b[0m\u001b[1;34m'code'\u001b[0m\u001b[1;33m:\u001b[0m \u001b[0mi\u001b[0m\u001b[1;33m,\u001b[0m \u001b[1;34m'company'\u001b[0m\u001b[1;33m:\u001b[0m \u001b[0mshare\u001b[0m\u001b[1;33m[\u001b[0m\u001b[1;34m'Company'\u001b[0m\u001b[1;33m]\u001b[0m\u001b[1;33m}\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m     70\u001b[0m         \u001b[0mprice\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0mcurrent\u001b[0m\u001b[1;33m[\u001b[0m\u001b[1;34m'current'\u001b[0m\u001b[1;33m]\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m     71\u001b[0m         \u001b[0mshare\u001b[0m\u001b[1;33m[\u001b[0m\u001b[1;34m'Current price'\u001b[0m\u001b[1;33m]\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0mprice\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m<ipython-input-7-98e319f29352>\u001b[0m in \u001b[0;36mget_prices\u001b[1;34m(share)\u001b[0m\n\u001b[0;32m     36\u001b[0m     \u001b[0mcompiler\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0mre\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mcompile\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;34m'\\d+\\s?,?\\d*'\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m     37\u001b[0m     \u001b[0mprint\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;34m'Getting prices for'\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0mshare\u001b[0m\u001b[1;33m[\u001b[0m\u001b[1;34m'company'\u001b[0m\u001b[1;33m]\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m---> 38\u001b[1;33m     \u001b[0mr\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0mrequests\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mget\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mshare_url\u001b[0m\u001b[1;33m+\u001b[0m\u001b[0mshare\u001b[0m\u001b[1;33m[\u001b[0m\u001b[1;34m'code'\u001b[0m\u001b[1;33m]\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m     39\u001b[0m     \u001b[0mcnt\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0mBS\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mr\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mcontent\u001b[0m\u001b[1;33m,\u001b[0m \u001b[1;34m'html.parser'\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m     40\u001b[0m     \u001b[0mprices\u001b[0m \u001b[1;33m=\u001b[0m \u001b[1;33m[\u001b[0m\u001b[1;33m]\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\requests\\api.py\u001b[0m in \u001b[0;36mget\u001b[1;34m(url, params, **kwargs)\u001b[0m\n\u001b[0;32m     74\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m     75\u001b[0m     \u001b[0mkwargs\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0msetdefault\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;34m'allow_redirects'\u001b[0m\u001b[1;33m,\u001b[0m \u001b[1;32mTrue\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m---> 76\u001b[1;33m     \u001b[1;32mreturn\u001b[0m \u001b[0mrequest\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;34m'get'\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0murl\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0mparams\u001b[0m\u001b[1;33m=\u001b[0m\u001b[0mparams\u001b[0m\u001b[1;33m,\u001b[0m \u001b[1;33m**\u001b[0m\u001b[0mkwargs\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m     77\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m     78\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\requests\\api.py\u001b[0m in \u001b[0;36mrequest\u001b[1;34m(method, url, **kwargs)\u001b[0m\n\u001b[0;32m     59\u001b[0m     \u001b[1;31m# cases, and look like a memory leak in others.\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m     60\u001b[0m     \u001b[1;32mwith\u001b[0m \u001b[0msessions\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mSession\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;33m)\u001b[0m \u001b[1;32mas\u001b[0m \u001b[0msession\u001b[0m\u001b[1;33m:\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m---> 61\u001b[1;33m         \u001b[1;32mreturn\u001b[0m \u001b[0msession\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mrequest\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mmethod\u001b[0m\u001b[1;33m=\u001b[0m\u001b[0mmethod\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0murl\u001b[0m\u001b[1;33m=\u001b[0m\u001b[0murl\u001b[0m\u001b[1;33m,\u001b[0m \u001b[1;33m**\u001b[0m\u001b[0mkwargs\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m     62\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m     63\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\requests\\sessions.py\u001b[0m in \u001b[0;36mrequest\u001b[1;34m(self, method, url, params, data, headers, cookies, files, auth, timeout, allow_redirects, proxies, hooks, stream, verify, cert, json)\u001b[0m\n\u001b[0;32m    528\u001b[0m         }\n\u001b[0;32m    529\u001b[0m         \u001b[0msend_kwargs\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0mupdate\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0msettings\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m--> 530\u001b[1;33m         \u001b[0mresp\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0mself\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0msend\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mprep\u001b[0m\u001b[1;33m,\u001b[0m \u001b[1;33m**\u001b[0m\u001b[0msend_kwargs\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m    531\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m    532\u001b[0m         \u001b[1;32mreturn\u001b[0m \u001b[0mresp\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\requests\\sessions.py\u001b[0m in \u001b[0;36msend\u001b[1;34m(self, request, **kwargs)\u001b[0m\n\u001b[0;32m    641\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m    642\u001b[0m         \u001b[1;31m# Send the request\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m--> 643\u001b[1;33m         \u001b[0mr\u001b[0m \u001b[1;33m=\u001b[0m \u001b[0madapter\u001b[0m\u001b[1;33m.\u001b[0m\u001b[0msend\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mrequest\u001b[0m\u001b[1;33m,\u001b[0m \u001b[1;33m**\u001b[0m\u001b[0mkwargs\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m    644\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m    645\u001b[0m         \u001b[1;31m# Total elapsed time of the request (approximately)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;32m~\\anaconda3\\lib\\site-packages\\requests\\adapters.py\u001b[0m in \u001b[0;36msend\u001b[1;34m(self, request, stream, timeout, verify, cert, proxies)\u001b[0m\n\u001b[0;32m    514\u001b[0m                 \u001b[1;32mraise\u001b[0m \u001b[0mSSLError\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0me\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0mrequest\u001b[0m\u001b[1;33m=\u001b[0m\u001b[0mrequest\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m    515\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m--> 516\u001b[1;33m             \u001b[1;32mraise\u001b[0m \u001b[0mConnectionError\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0me\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0mrequest\u001b[0m\u001b[1;33m=\u001b[0m\u001b[0mrequest\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m    517\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m    518\u001b[0m         \u001b[1;32mexcept\u001b[0m \u001b[0mClosedPoolError\u001b[0m \u001b[1;32mas\u001b[0m \u001b[0me\u001b[0m\u001b[1;33m:\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;31mConnectionError\u001b[0m: HTTPSConnectionPool(host='uzse.uz', port=443): Max retries exceeded with url: /isu_infos/STK?isu_cd=UZ7037560008 (Caused by NewConnectionError('<urllib3.connection.HTTPSConnection object at 0x000001F3F6CBE340>: Failed to establish a new connection: [WinError 10060] Попытка установить соединение была безуспешной, т.к. от другого компьютера за требуемое время не получен нужный отклик, или было разорвано уже установленное соединение из-за неверного отклика уже подключенного компьютера'))"
+     ]
+    }
+   ],
+   "source": [
+    "sort = preprocess_data(data)\n",
+    "actives = process_data(sort)\n",
+    "currentIndex = 0\n",
+    "baseIndex = 0\n",
+    "totalProfit = 0\n",
+    "nsa = 0\n",
+    "ta = 0\n",
+    "fee = 0\n",
+    "eq = 0\n",
+    "ep = 0\n",
+    "trades = len(sort)\n",
+    "c = collections.Counter()\n",
+    "for item in sort:\n",
+    "    nsa += item['Net Settlement Amount']\n",
+    "    ta += item['Trading Amount']\n",
+    "    fee += item['Fee']\n",
+    "    eq += item['Executed Quantity']\n",
+    "    ep += item['Execution Price']\n",
+    "\n",
+    "for code, active in actives.items():\n",
+    "    currentIndex += active['Current price']\n",
+    "    baseIndex += active['Base price']\n",
+    "    totalProfit += active['Total profit']"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Print"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Umumiy harajatlar                               12 965 878.10\n",
+      "Savdo harajatlari                               12 837 503.05\n",
+      "To'lovlar                                          128 375.05\n",
+      "Aktivlar qiymati                                12 676 670.00\n",
+      "Aksiyalar soni                                   1 423 630.00\n"
+     ]
+    },
+    {
+     "ename": "NameError",
+     "evalue": "name 'current' is not defined",
+     "output_type": "error",
+     "traceback": [
+      "\u001b[1;31m---------------------------------------------------------------------------\u001b[0m",
+      "\u001b[1;31mNameError\u001b[0m                                 Traceback (most recent call last)",
+      "\u001b[1;32m<ipython-input-9-208f596ec266>\u001b[0m in \u001b[0;36m<module>\u001b[1;34m\u001b[0m\n\u001b[0;32m     14\u001b[0m     \u001b[0me\u001b[0m\u001b[1;33m(\u001b[0m \u001b[1;34m'Daromad'\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0mn\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mtotalProfit\u001b[0m \u001b[1;33m-\u001b[0m \u001b[0mta\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m     15\u001b[0m \u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m---> 16\u001b[1;33m \u001b[0mprint_data\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m",
+      "\u001b[1;32m<ipython-input-9-208f596ec266>\u001b[0m in \u001b[0;36mprint_data\u001b[1;34m()\u001b[0m\n\u001b[0;32m      6\u001b[0m     \u001b[0me\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;34m'Aktivlar qiymati'\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0mn\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mtotalProfit\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m      7\u001b[0m     \u001b[0me\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;34m'Aksiyalar soni'\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0mn\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0meq\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[1;32m----> 8\u001b[1;33m     \u001b[0me\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;34m'Xarid narxlari indeksi'\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0mn\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mbaseIndex\u001b[0m \u001b[1;33m/\u001b[0m \u001b[0mlen\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mcurrent\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0m\u001b[0;32m      9\u001b[0m     \u001b[0me\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;34m'Joriy narxlar indeksi'\u001b[0m\u001b[1;33m,\u001b[0m \u001b[0mn\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mcurrentIndex\u001b[0m \u001b[1;33m/\u001b[0m \u001b[0mlen\u001b[0m\u001b[1;33m(\u001b[0m\u001b[0mcurrent\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n\u001b[0;32m     10\u001b[0m     \u001b[0mprint\u001b[0m\u001b[1;33m(\u001b[0m\u001b[1;34m'-----------------------------'\u001b[0m\u001b[1;33m)\u001b[0m\u001b[1;33m\u001b[0m\u001b[1;33m\u001b[0m\u001b[0m\n",
+      "\u001b[1;31mNameError\u001b[0m: name 'current' is not defined"
+     ]
+    }
+   ],
+   "source": [
+    "def print_data():\n",
+    "    sorted_actives = sorted(actives, key=lambda x: actives[x]['Total spent'], reverse=True)\n",
+    "    e('Umumiy harajatlar', n(nsa))\n",
+    "    e('Savdo harajatlari', n(ta))\n",
+    "    e('To\\'lovlar', n(fee))\n",
+    "    e('Aktivlar qiymati', n(totalProfit))\n",
+    "    e('Aksiyalar soni', n(eq))\n",
+    "    e('Xarid narxlari indeksi', n(baseIndex / len(current)))\n",
+    "    e('Joriy narxlar indeksi', n(currentIndex / len(current)))\n",
+    "    print('-----------------------------')\n",
+    "    for i in sorted_actives:\n",
+    "        e(actives[i]['Company'], n(actives[i]['Profit change']) + n(actives[i]['Total spent']))\n",
+    "    print('-----------------------------')\n",
+    "    e( 'Daromad', n(totalProfit - ta))\n",
+    "    \n",
+    "print_data()"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.8.3"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
